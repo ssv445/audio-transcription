@@ -21,16 +21,22 @@
             100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
         }
         /* Custom scrollbar */
-        textarea::-webkit-scrollbar, #recordingsList::-webkit-scrollbar {
+        textarea::-webkit-scrollbar, #recordingsListContainer::-webkit-scrollbar {
             width: 8px;
         }
-        textarea::-webkit-scrollbar-track, #recordingsList::-webkit-scrollbar-track {
+        textarea::-webkit-scrollbar-track, #recordingsListContainer::-webkit-scrollbar-track {
             background: #27272a;
         }
-        textarea::-webkit-scrollbar-thumb, #recordingsList::-webkit-scrollbar-thumb {
+        textarea::-webkit-scrollbar-thumb, #recordingsListContainer::-webkit-scrollbar-thumb {
             background-color: #52525b;
             border-radius: 10px;
             border: 2px solid #27272a;
+        }
+        .action-icon {
+            transition: background-color 0.2s;
+        }
+        .action-icon:hover {
+            background-color: #3f3f46;
         }
     </style>
 </head>
@@ -71,24 +77,18 @@
         <!-- Text Area -->
         <div>
             <label for="transcription" class="sr-only">Transcription</label>
-            <textarea id="transcription" rows="8" class="w-full bg-zinc-900/50 border border-zinc-700 rounded-lg p-4 focus:ring-2 focus:ring-indigo-500 focus:outline-none resize-none" placeholder="Your transcribed text will appear here..."></textarea>
+            <textarea id="transcription" rows="6" class="w-full bg-zinc-900/50 border border-zinc-700 rounded-lg p-4 focus:ring-2 focus:ring-indigo-500 focus:outline-none resize-none" placeholder="Your transcribed text will appear here..."></textarea>
         </div>
         
-        <!-- Actions and Status -->
-        <div class="flex flex-col md:flex-row items-center justify-between gap-4">
-            <p id="status" class="text-zinc-400 text-sm h-5 flex-grow text-center md:text-left">Ready to go!</p>
-            <button id="copyBtn" class="w-full md:w-auto flex items-center justify-center bg-zinc-700 hover:bg-zinc-600 transition text-zinc-200 font-medium py-2 px-5 rounded-lg">
-                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
-                <span>Copy Text</span>
-            </button>
-        </div>
+        <!-- Status -->
+        <p id="status" class="text-zinc-400 text-sm h-5 text-center">Ready to go!</p>
 
         <!-- Recordings Section -->
         <div id="recordings-section" class="pt-4 border-t border-zinc-700">
              <h2 class="text-lg font-semibold text-zinc-300 mb-2">Your Recordings</h2>
-             <div class="bg-zinc-900/50 rounded-lg p-3 max-h-48 overflow-y-auto" id="recordingsListContainer">
-                <ol id="recordingsList" class="space-y-2 list-decimal list-inside"></ol>
-                <p id="noRecordings" class="text-zinc-500 text-sm text-center">No recordings yet.</p>
+             <div class="bg-zinc-900/50 rounded-lg p-2 max-h-56 overflow-y-auto" id="recordingsListContainer">
+                <ul id="recordingsList" class="space-y-2"></ul>
+                <p id="noRecordings" class="text-zinc-500 text-sm text-center p-4">No recordings yet.</p>
              </div>
         </div>
     </div>
@@ -116,7 +116,6 @@
             const recordBtn = document.getElementById('recordBtn');
             const recordBtnText = document.getElementById('recordBtnText');
             const transcriptionTextarea = document.getElementById('transcription');
-            const copyBtn = document.getElementById('copyBtn');
             const statusDiv = document.getElementById('status');
             const recordingsList = document.getElementById('recordingsList');
             const noRecordingsMsg = document.getElementById('noRecordings');
@@ -126,6 +125,9 @@
             let audioChunks = [];
             let isRecording = false;
             let final_transcript = '';
+            let recordings = [];
+            let timerInterval;
+            let currentRecordingId = null;
 
             const languages = [
                 { name: 'English (US)', code: 'en-US' }, { name: 'English (UK)', code: 'en-GB' },
@@ -140,6 +142,7 @@
             function initialize() {
                 populateLanguages();
                 setupRecognition();
+                loadRecordingsFromHistory();
                 attachEventListeners();
             }
 
@@ -158,9 +161,9 @@
                 recognition.onresult = (event) => {
                     let interim_transcript = '';
                     let current_final = '';
-                     for (let i = event.resultIndex; i < event.results.length; ++i) {
+                    for (let i = event.resultIndex; i < event.results.length; ++i) {
                         if (event.results[i].isFinal) {
-                            current_final += event.results[i][0].transcript;
+                            current_final += event.results[i][0].transcript + ' ';
                         } else {
                             interim_transcript += event.results[i][0].transcript;
                         }
@@ -187,37 +190,35 @@
                     await startRecording();
                 }
             }
-
+            
             async function startRecording() {
-                 if (isRecording) return;
+                if (isRecording) return;
                 try {
                     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    isRecording = true;
+                    currentRecordingId = `rec-${Date.now()}`;
                     
-                    // Start MediaRecorder for audio capture
-                    audioChunks = [];
+                    addRecordingToList({ id: currentRecordingId, timestamp: new Date(), isLive: true });
+
                     mediaRecorder = new MediaRecorder(stream);
-                    mediaRecorder.ondataavailable = event => {
-                        audioChunks.push(event.data);
-                    };
-                    mediaRecorder.onstop = saveRecording;
+                    audioChunks = [];
+                    mediaRecorder.ondataavailable = event => audioChunks.push(event.data);
+                    mediaRecorder.onstop = () => finalizeRecording(stream);
                     mediaRecorder.start();
 
-                    // Start SpeechRecognition
                     transcriptionTextarea.value = '';
                     final_transcript = '';
                     recognition.start();
 
-                    // Update UI
-                    isRecording = true;
                     statusDiv.textContent = 'Listening...';
                     recordBtn.classList.add('bg-red-600', 'hover:bg-red-700', 'pulsing');
                     recordBtn.classList.remove('bg-indigo-600', 'hover:bg-indigo-700');
                     recordBtnText.textContent = 'Stop Recording';
                     permissionGuideDiv.classList.add('hidden');
-                    
                 } catch (err) {
+                    isRecording = false; // reset state
                     console.error("Error starting recording:", err);
-                     if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+                    if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
                         permissionGuideDiv.classList.remove('hidden');
                         statusDiv.textContent = 'Microphone permission denied.';
                     } else {
@@ -228,14 +229,32 @@
 
             function stopRecording() {
                 if (!isRecording) return;
-
                 recognition.stop();
-                mediaRecorder.stop(); // This will trigger the 'onstop' event
-                
-                // Stop all tracks in the stream to turn off the mic indicator
-                if (mediaRecorder.stream) {
-                    mediaRecorder.stream.getTracks().forEach(track => track.stop());
+                mediaRecorder.stop();
+            }
+
+            function finalizeRecording(stream) {
+                 if (stream) {
+                    stream.getTracks().forEach(track => track.stop());
                 }
+
+                clearInterval(timerInterval);
+                const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                const reader = new FileReader();
+                reader.onloadend = () => {
+                    const base64Audio = reader.result;
+                    const recordingData = {
+                        id: currentRecordingId,
+                        timestamp: new Date(),
+                        audio: base64Audio,
+                        transcript: final_transcript.trim(),
+                        isLive: false
+                    };
+                    recordings.push(recordingData);
+                    saveRecordingsToHistory();
+                    updateRecordingInList(recordingData);
+                };
+                reader.readAsDataURL(audioBlob);
 
                 isRecording = false;
                 statusDiv.textContent = 'Click "Start Recording" to begin.';
@@ -243,67 +262,134 @@
                 recordBtn.classList.add('bg-indigo-600', 'hover:bg-indigo-700');
                 recordBtnText.textContent = 'Start Recording';
             }
-
-            function saveRecording() {
-                if (audioChunks.length === 0) return;
-
-                const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-                const audioUrl = URL.createObjectURL(audioBlob);
-                
+            
+            function createRecordingDOM(rec) {
                 const li = document.createElement('li');
-                li.className = 'text-sm text-zinc-300 flex justify-between items-center';
+                li.id = rec.id;
+                li.className = 'p-3 bg-zinc-700/50 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3';
 
-                const now = new Date();
-                const timestamp = `${now.toLocaleDateString()} ${now.toLocaleTimeString()}`;
-                const fileName = `recording-${now.toISOString().replace(/:/g, '-')}.webm`;
+                const textContent = `
+                    <div class="flex-grow">
+                        <div class="font-medium text-zinc-200">${rec.isLive ? "Recording in progress..." : new Date(rec.timestamp).toLocaleString()}</div>
+                        <div class="text-xs text-zinc-400 timer-display">${rec.isLive ? '00:00' : ''}</div>
+                    </div>
+                    <div class="flex items-center gap-2 action-buttons"></div>
+                `;
+                li.innerHTML = textContent;
+
+                if (rec.isLive) {
+                    let seconds = 0;
+                    const timerDisplay = li.querySelector('.timer-display');
+                    timerInterval = setInterval(() => {
+                        seconds++;
+                        const min = Math.floor(seconds / 60).toString().padStart(2, '0');
+                        const sec = (seconds % 60).toString().padStart(2, '0');
+                        timerDisplay.textContent = `${min}:${sec}`;
+                    }, 1000);
+                } else {
+                     addRecordingActions(li, rec);
+                }
                 
-                const link = document.createElement('a');
-                link.href = audioUrl;
-                link.download = fileName;
-                link.textContent = `Recording - ${timestamp}`;
-                link.className = 'text-indigo-400 hover:underline';
-
-                li.appendChild(link);
-                recordingsList.appendChild(li);
-
-                noRecordingsMsg.classList.add('hidden');
-                audioChunks = []; // Clear for next recording
+                return li;
             }
 
-            function copyText() {
-                const textToCopy = transcriptionTextarea.value;
-                if (!textToCopy) {
-                    statusDiv.textContent = 'Nothing to copy!';
-                    setTimeout(() => { if (statusDiv.textContent === 'Nothing to copy!') statusDiv.textContent = ''; }, 2000);
-                    return;
-                }
+            function addRecordingActions(liElement, rec) {
+                const buttonContainer = liElement.querySelector('.action-buttons');
+                if(!buttonContainer) return;
+                
+                buttonContainer.innerHTML = ''; // Clear previous buttons if any
 
+                const audioUrl = rec.audio.startsWith('data:') ? rec.audio : URL.createObjectURL(base64ToBlob(rec.audio));
+                const textBlob = new Blob([rec.transcript], { type: 'text/plain' });
+                const textUrl = URL.createObjectURL(textBlob);
+                const fileNameBase = `recording-${new Date(rec.timestamp).toISOString().replace(/:/g, '-')}`;
+
+                // Download Audio
+                const downloadAudio = document.createElement('a');
+                downloadAudio.href = audioUrl;
+                downloadAudio.download = `${fileNameBase}.webm`;
+                downloadAudio.className = "p-2 rounded-full action-icon";
+                downloadAudio.title = "Download Audio";
+                downloadAudio.innerHTML = `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>`;
+
+                // Download Text
+                const downloadText = document.createElement('a');
+                downloadText.href = textUrl;
+                downloadText.download = `${fileNameBase}.txt`;
+                downloadText.className = "p-2 rounded-full action-icon";
+                downloadText.title = "Download Text";
+                downloadText.innerHTML = `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>`;
+
+                // Copy Text
+                const copyButton = document.createElement('button');
+                copyButton.className = "p-2 rounded-full action-icon";
+                copyButton.title = "Copy Text";
+                copyButton.innerHTML = `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>`;
+                copyButton.onclick = () => copySpecificText(rec.transcript, copyButton);
+                
+                buttonContainer.append(downloadAudio, downloadText, copyButton);
+            }
+            
+            function addRecordingToList(rec) {
+                noRecordingsMsg.classList.add('hidden');
+                const li = createRecordingDOM(rec);
+                recordingsList.prepend(li); // Add to top
+            }
+
+            function updateRecordingInList(rec) {
+                const li = document.getElementById(rec.id);
+                if (li) {
+                    li.querySelector('.font-medium').textContent = new Date(rec.timestamp).toLocaleString();
+                    li.querySelector('.timer-display').textContent = '';
+                    addRecordingActions(li, rec);
+                }
+            }
+
+            function loadRecordingsFromHistory() {
+                const savedRecordings = localStorage.getItem('voiceRecordings');
+                if (savedRecordings) {
+                    recordings = JSON.parse(savedRecordings);
+                    recordings.forEach(rec => addRecordingToList(rec));
+                }
+            }
+
+            function saveRecordingsToHistory() {
+                localStorage.setItem('voiceRecordings', JSON.stringify(recordings));
+            }
+            
+            function copySpecificText(text, buttonElement) {
+                if (!text) return;
                 const tempTextArea = document.createElement("textarea");
-                tempTextArea.value = textToCopy;
+                tempTextArea.value = text;
                 document.body.appendChild(tempTextArea);
                 tempTextArea.select();
                 try {
                     document.execCommand('copy');
-                    statusDiv.textContent = 'Text copied to clipboard!';
+                    const originalIcon = buttonElement.innerHTML;
+                    buttonElement.innerHTML = `<svg class="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>`;
+                    setTimeout(() => { buttonElement.innerHTML = originalIcon; }, 2000);
                 } catch (err) {
-                    statusDiv.textContent = 'Failed to copy text.';
+                    console.error('Failed to copy text:', err);
                 }
                 document.body.removeChild(tempTextArea);
-                
-                setTimeout(() => {
-                    if (statusDiv.textContent === 'Text copied to clipboard!') {
-                       statusDiv.textContent = isRecording ? 'Listening...' : 'Ready to go!';
-                    }
-                }, 2000);
+            }
+
+            function base64ToBlob(base64) {
+                const parts = base64.split(';base64,');
+                const contentType = parts[0].split(':')[1];
+                const raw = window.atob(parts[1]);
+                const rawLength = raw.length;
+                const uInt8Array = new Uint8Array(rawLength);
+                for (let i = 0; i < rawLength; ++i) {
+                    uInt8Array[i] = raw.charCodeAt(i);
+                }
+                return new Blob([uInt8Array], { type: contentType });
             }
 
             function attachEventListeners() {
                 recordBtn.addEventListener('click', toggleRecording);
-                copyBtn.addEventListener('click', copyText);
                 languageSelect.addEventListener('change', () => {
-                    if (isRecording) {
-                        stopRecording();
-                    }
+                    if (isRecording) stopRecording();
                     recognition.lang = languageSelect.value;
                 });
             }
