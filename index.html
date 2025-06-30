@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Voice to Text & Record</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/lamejs@1.2.1/lame.min.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         body {
@@ -342,7 +343,7 @@
                     
                     addRecordingToList({ id: currentRecordingId, isLive: true });
 
-                    mediaRecorder = new MediaRecorder(stream);
+                    mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
                     audioChunks = [];
                     mediaRecorder.ondataavailable = event => audioChunks.push(event.data);
                     mediaRecorder.onstop = () => finalizeRecording(stream);
@@ -394,9 +395,10 @@
             
             async function finalizeRecording(stream) {
                 if (stream) stream.getTracks().forEach(track => track.stop());
-
                 clearInterval(timerInterval);
-                const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+
+                const webmBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                
                 const transcriptText = final_transcript.trim();
                 const title = transcriptText ? transcriptText.split(' ').slice(0, 5).join(' ') + (transcriptText.split(' ').length > 5 ? '...' : '') : 'Untitled Recording';
                 const wordCount = transcriptText ? transcriptText.split(/\s+/).filter(Boolean).length : 0;
@@ -404,7 +406,7 @@
                 const recordingData = {
                     id: currentRecordingId,
                     timestamp: new Date().toISOString(),
-                    audio: audioBlob,
+                    audio: webmBlob, // Store original webm
                     transcript: transcriptText,
                     title: title,
                     duration: secondsElapsed,
@@ -415,6 +417,31 @@
                 await dbRecordings.put(recordingData);
                 updateRecordingInList(recordingData);
                 updateTotalStorage();
+            }
+
+            async function convertToMp3(audioBlob) {
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const arrayBuffer = await audioBlob.arrayBuffer();
+                const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+
+                const mp3encoder = new lamejs.Mp3Encoder(1, audioBuffer.sampleRate, 128); // 1 channel, 128 kbps
+                const samples = audioBuffer.getChannelData(0);
+                const sampleBlockSize = 1152;
+                const mp3Data = [];
+
+                for (let i = 0; i < samples.length; i += sampleBlockSize) {
+                    const sampleChunk = samples.subarray(i, i + sampleBlockSize);
+                    const mp3buf = mp3encoder.encodeBuffer(sampleChunk);
+                    if (mp3buf.length > 0) {
+                        mp3Data.push(new Int8Array(mp3buf));
+                    }
+                }
+                const mp3buf = mp3encoder.flush();
+                if (mp3buf.length > 0) {
+                    mp3Data.push(new Int8Array(mp3buf));
+                }
+
+                return new Blob(mp3Data, { type: 'audio/mp3' });
             }
 
             function updateUIForState() {
@@ -498,7 +525,6 @@
                 const headerButtonContainer = liElement.querySelector('.header-action-buttons');
                 const footerButtonContainer = liElement.querySelector('.footer-action-buttons');
                 
-                const audioUrl = URL.createObjectURL(rec.audio);
                 const textBlob = new Blob([rec.transcript], { type: 'text/plain' });
                 const textUrl = URL.createObjectURL(textBlob);
                 const fileNameBase = `recording-${new Date(rec.timestamp).toISOString().replace(/:/g, '-')}`;
@@ -511,11 +537,25 @@
                 headerButtonContainer.append(playButton, copyButton);
 
                 // Footer buttons
-                const downloadAudio = createButton('a', { href: audioUrl, download: `${fileNameBase}.webm`, title: "Download Audio" }, `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>`);
+                const downloadWebM = createButton('a', { href: URL.createObjectURL(rec.audio), download: `${fileNameBase}.webm`, title: "Download Original (WebM)" }, `WebM`);
+                const downloadMp3 = createButton('button', { title: "Download as MP3" }, `MP3`);
+                downloadMp3.onclick = async (e) => {
+                    e.stopPropagation();
+                    downloadMp3.textContent = '...';
+                    const mp3Blob = await convertToMp3(rec.audio);
+                    const mp3Url = URL.createObjectURL(mp3Blob);
+                    const a = document.createElement('a');
+                    a.href = mp3Url;
+                    a.download = `${fileNameBase}.mp3`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    downloadMp3.textContent = 'MP3';
+                };
                 const downloadText = createButton('a', { href: textUrl, download: `${fileNameBase}.txt`, title: "Download Text" }, `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>`);
                 const deleteButton = createButton('button', { title: "Delete Recording" }, `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>`, 'delete-icon');
                 deleteButton.onclick = (e) => { e.stopPropagation(); deleteRecording(rec.id); };
-                footerButtonContainer.append(downloadAudio, downloadText, deleteButton);
+                footerButtonContainer.append(downloadWebM, downloadMp3, downloadText, deleteButton);
             }
 
             async function renderRecordingsForCurrentFolder() {
