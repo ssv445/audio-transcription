@@ -127,6 +127,7 @@
             let final_transcript = '';
             let recordings = [];
             let timerInterval;
+            let secondsElapsed = 0;
             let currentRecordingId = null;
 
             const languages = [
@@ -198,7 +199,7 @@
                     isRecording = true;
                     currentRecordingId = `rec-${Date.now()}`;
                     
-                    addRecordingToList({ id: currentRecordingId, timestamp: new Date(), isLive: true });
+                    addRecordingToList({ id: currentRecordingId, isLive: true });
 
                     mediaRecorder = new MediaRecorder(stream);
                     audioChunks = [];
@@ -216,7 +217,7 @@
                     recordBtnText.textContent = 'Stop Recording';
                     permissionGuideDiv.classList.add('hidden');
                 } catch (err) {
-                    isRecording = false; // reset state
+                    isRecording = false;
                     console.error("Error starting recording:", err);
                     if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
                         permissionGuideDiv.classList.remove('hidden');
@@ -234,23 +235,23 @@
             }
 
             function finalizeRecording(stream) {
-                 if (stream) {
-                    stream.getTracks().forEach(track => track.stop());
-                }
+                if (stream) stream.getTracks().forEach(track => track.stop());
 
                 clearInterval(timerInterval);
                 const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
                 const reader = new FileReader();
                 reader.onloadend = () => {
-                    const base64Audio = reader.result;
+                    const transcriptText = final_transcript.trim();
+                    const title = transcriptText ? transcriptText.split(' ').slice(0, 5).join(' ') + '...' : 'Untitled Recording';
                     const recordingData = {
                         id: currentRecordingId,
-                        timestamp: new Date(),
-                        audio: base64Audio,
-                        transcript: final_transcript.trim(),
-                        isLive: false
+                        timestamp: new Date().toISOString(),
+                        audio: reader.result,
+                        transcript: transcriptText,
+                        title: title,
+                        duration: secondsElapsed
                     };
-                    recordings.push(recordingData);
+                    recordings.unshift(recordingData); // Add to beginning
                     saveRecordingsToHistory();
                     updateRecordingInList(recordingData);
                 };
@@ -262,44 +263,82 @@
                 recordBtn.classList.add('bg-indigo-600', 'hover:bg-indigo-700');
                 recordBtnText.textContent = 'Start Recording';
             }
-            
-            function createRecordingDOM(rec) {
+
+            function formatDuration(seconds) {
+                const min = Math.floor(seconds / 60).toString().padStart(2, '0');
+                const sec = (seconds % 60).toString().padStart(2, '0');
+                return `${min}:${sec}`;
+            }
+
+            function formatRelativeTime(isoTimestamp) {
+                const now = new Date();
+                const past = new Date(isoTimestamp);
+                const seconds = Math.floor((now - past) / 1000);
+
+                if (seconds < 10) return "just now";
+                if (seconds < 60) return `${seconds} seconds ago`;
+
+                const minutes = Math.floor(seconds / 60);
+                if (minutes < 60) return `${minutes} minute${minutes > 1 ? 's' : ''} ago`;
+
+                const hours = Math.floor(minutes / 60);
+                if (hours < 24) return `${hours} hour${hours > 1 ? 's' : ''} ago`;
+
+                const days = Math.floor(hours / 24);
+                if (days < 7) return `${days} day${days > 1 ? 's' : ''} ago`;
+
+                return past.toLocaleDateString();
+            }
+
+            function createAndDisplayRecording(rec) {
                 const li = document.createElement('li');
                 li.id = rec.id;
                 li.className = 'p-3 bg-zinc-700/50 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3';
+                recordingsList.prepend(li); // Add to top of the list
+                updateRecordingInList(rec);
+            }
 
-                const textContent = `
+            function addRecordingToList(rec) {
+                noRecordingsMsg.classList.add('hidden');
+                secondsElapsed = 0;
+
+                const li = document.createElement('li');
+                li.id = rec.id;
+                li.className = 'p-3 bg-zinc-700/50 rounded-lg flex items-center justify-between gap-3';
+                li.innerHTML = `
                     <div class="flex-grow">
-                        <div class="font-medium text-zinc-200">${rec.isLive ? "Recording in progress..." : new Date(rec.timestamp).toLocaleString()}</div>
-                        <div class="text-xs text-zinc-400 timer-display">${rec.isLive ? '00:00' : ''}</div>
+                        <div class="font-medium text-zinc-200">Recording in progress...</div>
+                        <div class="text-xs text-zinc-400 timer-display">00:00</div>
                     </div>
-                    <div class="flex items-center gap-2 action-buttons"></div>
                 `;
-                li.innerHTML = textContent;
+                recordingsList.prepend(li);
 
-                if (rec.isLive) {
-                    let seconds = 0;
-                    const timerDisplay = li.querySelector('.timer-display');
-                    timerInterval = setInterval(() => {
-                        seconds++;
-                        const min = Math.floor(seconds / 60).toString().padStart(2, '0');
-                        const sec = (seconds % 60).toString().padStart(2, '0');
-                        timerDisplay.textContent = `${min}:${sec}`;
-                    }, 1000);
-                } else {
-                     addRecordingActions(li, rec);
-                }
-                
-                return li;
+                timerInterval = setInterval(() => {
+                    secondsElapsed++;
+                    li.querySelector('.timer-display').textContent = formatDuration(secondsElapsed);
+                }, 1000);
+            }
+
+            function updateRecordingInList(rec) {
+                const li = document.getElementById(rec.id);
+                if (!li) return;
+
+                li.innerHTML = `
+                    <div class="flex-grow overflow-hidden">
+                        <div class="font-medium text-zinc-200 truncate" title="${rec.title}">${rec.title}</div>
+                        <div class="text-xs text-zinc-400">
+                            <span>${formatRelativeTime(rec.timestamp)}</span> &middot; <span>${formatDuration(rec.duration)}</span>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-2 action-buttons flex-shrink-0"></div>
+                `;
+                addRecordingActions(li, rec);
             }
 
             function addRecordingActions(liElement, rec) {
                 const buttonContainer = liElement.querySelector('.action-buttons');
-                if(!buttonContainer) return;
-                
-                buttonContainer.innerHTML = ''; // Clear previous buttons if any
-
-                const audioUrl = rec.audio.startsWith('data:') ? rec.audio : URL.createObjectURL(base64ToBlob(rec.audio));
+                const audioBlob = base64ToBlob(rec.audio);
+                const audioUrl = URL.createObjectURL(audioBlob);
                 const textBlob = new Blob([rec.transcript], { type: 'text/plain' });
                 const textUrl = URL.createObjectURL(textBlob);
                 const fileNameBase = `recording-${new Date(rec.timestamp).toISOString().replace(/:/g, '-')}`;
@@ -329,27 +368,13 @@
                 
                 buttonContainer.append(downloadAudio, downloadText, copyButton);
             }
-            
-            function addRecordingToList(rec) {
-                noRecordingsMsg.classList.add('hidden');
-                const li = createRecordingDOM(rec);
-                recordingsList.prepend(li); // Add to top
-            }
-
-            function updateRecordingInList(rec) {
-                const li = document.getElementById(rec.id);
-                if (li) {
-                    li.querySelector('.font-medium').textContent = new Date(rec.timestamp).toLocaleString();
-                    li.querySelector('.timer-display').textContent = '';
-                    addRecordingActions(li, rec);
-                }
-            }
 
             function loadRecordingsFromHistory() {
                 const savedRecordings = localStorage.getItem('voiceRecordings');
                 if (savedRecordings) {
                     recordings = JSON.parse(savedRecordings);
-                    recordings.forEach(rec => addRecordingToList(rec));
+                    if (recordings.length > 0) noRecordingsMsg.classList.add('hidden');
+                    recordings.forEach(rec => createAndDisplayRecording(rec));
                 }
             }
 
@@ -359,19 +384,11 @@
             
             function copySpecificText(text, buttonElement) {
                 if (!text) return;
-                const tempTextArea = document.createElement("textarea");
-                tempTextArea.value = text;
-                document.body.appendChild(tempTextArea);
-                tempTextArea.select();
-                try {
-                    document.execCommand('copy');
+                navigator.clipboard.writeText(text).then(() => {
                     const originalIcon = buttonElement.innerHTML;
                     buttonElement.innerHTML = `<svg class="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>`;
                     setTimeout(() => { buttonElement.innerHTML = originalIcon; }, 2000);
-                } catch (err) {
-                    console.error('Failed to copy text:', err);
-                }
-                document.body.removeChild(tempTextArea);
+                }).catch(err => console.error('Failed to copy text:', err));
             }
 
             function base64ToBlob(base64) {
@@ -380,9 +397,7 @@
                 const raw = window.atob(parts[1]);
                 const rawLength = raw.length;
                 const uInt8Array = new Uint8Array(rawLength);
-                for (let i = 0; i < rawLength; ++i) {
-                    uInt8Array[i] = raw.charCodeAt(i);
-                }
+                for (let i = 0; i < rawLength; ++i) uInt8Array[i] = raw.charCodeAt(i);
                 return new Blob([uInt8Array], { type: contentType });
             }
 
