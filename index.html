@@ -38,8 +38,22 @@
         .action-icon:hover {
             background-color: #3f3f46;
         }
+        .delete-icon:hover {
+            background-color: #7f1d1d; /* red-800 */
+        }
         .hidden {
             display: none;
+        }
+        .expandable-content {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.5s ease-in-out;
+        }
+        .expanded .expandable-content {
+            max-height: 500px; /* Adjust as needed */
+        }
+        .recording-header {
+            cursor: pointer;
         }
     </style>
 </head>
@@ -102,7 +116,10 @@
 
         <!-- Recordings Section -->
         <div id="recordings-section" class="pt-4 border-t border-zinc-700">
-             <h2 class="text-lg font-semibold text-zinc-300 mb-2">Your Recordings</h2>
+             <div class="flex justify-between items-center mb-2">
+                <h2 class="text-lg font-semibold text-zinc-300">Your Recordings</h2>
+                <span id="totalStorage" class="text-xs text-zinc-500"></span>
+             </div>
              <div class="bg-zinc-900/50 rounded-lg p-2 max-h-56 overflow-y-auto" id="recordingsListContainer">
                 <ul id="recordingsList" class="space-y-2"></ul>
                 <p id="noRecordings" class="text-zinc-500 text-sm text-center p-4">No recordings yet.</p>
@@ -135,6 +152,7 @@
             const statusDiv = document.getElementById('status');
             const recordingsList = document.getElementById('recordingsList');
             const noRecordingsMsg = document.getElementById('noRecordings');
+            const totalStorageEl = document.getElementById('totalStorage');
             
             let recognition = new SpeechRecognition();
             let mediaRecorder;
@@ -192,7 +210,10 @@
 
                 recognition.onerror = (event) => {
                     console.error('Speech recognition error:', event.error);
-                    if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+                    if (event.error === 'no-speech') {
+                        pauseRecording();
+                        statusDiv.textContent = 'No speech detected. Paused.';
+                    } else if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
                         permissionGuideDiv.classList.remove('hidden');
                         statusDiv.textContent = 'Permission denied.';
                         state = 'idle';
@@ -241,7 +262,9 @@
                 if (state !== 'recording') return;
                 state = 'paused';
                 recognition.stop();
-                mediaRecorder.pause();
+                if (mediaRecorder && mediaRecorder.state === 'recording') {
+                    mediaRecorder.pause();
+                }
                 clearInterval(timerInterval);
                 updateUIForState();
             }
@@ -250,7 +273,9 @@
                 if (state !== 'paused') return;
                 state = 'recording';
                 recognition.start();
-                mediaRecorder.resume();
+                if (mediaRecorder && mediaRecorder.state === 'paused') {
+                    mediaRecorder.resume();
+                }
                 startTimer();
                 updateUIForState();
             }
@@ -297,15 +322,9 @@
                 stopBtn.classList.toggle('hidden', state === 'idle');
 
                 switch(state) {
-                    case 'idle':
-                        statusDiv.textContent = 'Ready to go!';
-                        break;
-                    case 'recording':
-                        statusDiv.textContent = 'Listening...';
-                        break;
-                    case 'paused':
-                        statusDiv.textContent = 'Recording paused.';
-                        break;
+                    case 'idle': statusDiv.textContent = 'Ready to go!'; break;
+                    case 'recording': statusDiv.textContent = 'Listening...'; break;
+                    case 'paused': statusDiv.textContent = 'Recording paused.'; break;
                 }
             }
 
@@ -315,15 +334,15 @@
                  const timerDisplay = li.querySelector('.timer-display');
                  timerInterval = setInterval(() => {
                     secondsElapsed++;
-                    timerDisplay.textContent = formatDuration(secondsElapsed);
+                    if(timerDisplay) timerDisplay.textContent = formatDuration(secondsElapsed);
                 }, 1000);
             }
-            
+
             function createAndDisplayRecording(rec) {
                 noRecordingsMsg.classList.add('hidden');
                 const li = document.createElement('li');
                 li.id = rec.id;
-                li.className = 'p-3 bg-zinc-700/50 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3';
+                li.className = 'bg-zinc-700/50 rounded-lg';
                 recordingsList.append(li);
                 updateRecordingInList(rec);
             }
@@ -346,33 +365,34 @@
                 recordingsList.prepend(li);
                 startTimer();
             }
-
+            
             function updateRecordingInList(rec) {
                 const li = document.getElementById(rec.id);
                 if (!li) return;
+                
+                li.className = 'bg-zinc-700/50 rounded-lg';
+
+                const audioBlob = base64ToBlob(rec.audio);
+                const fileSize = formatFileSize(audioBlob.size);
 
                 li.innerHTML = `
-                    <div class="flex-grow overflow-hidden">
-                        <div class="font-medium text-zinc-200 truncate" title="${rec.title}">${rec.title}</div>
-                        <div class="text-xs text-zinc-400">
-                            <span>${formatRelativeTime(rec.timestamp)}</span> &middot; <span>${formatDuration(rec.duration)}</span> &middot; <span>${rec.wordCount} words</span>
+                    <div class="recording-header p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div class="flex-grow overflow-hidden">
+                            <div class="font-medium text-zinc-200 truncate" title="${rec.title}">${rec.title}</div>
+                            <div class="text-xs text-zinc-400">
+                                <span>${formatRelativeTime(rec.timestamp)}</span> &middot; <span>${formatDuration(rec.duration)}</span> &middot; <span>${rec.wordCount} words</span> &middot; <span class="audio-size">${fileSize}</span>
+                            </div>
                         </div>
+                        <div class="flex items-center gap-2 action-buttons flex-shrink-0"></div>
                     </div>
-                    <div class="flex items-center gap-2 action-buttons flex-shrink-0"></div>
+                    <div class="expandable-content border-t border-zinc-600/50 mx-3">
+                        <p class="p-3 text-sm text-zinc-300 whitespace-pre-wrap">${rec.transcript || 'No transcription available.'}</p>
+                    </div>
                 `;
                 addRecordingActions(li, rec);
+                li.querySelector('.recording-header').addEventListener('click', () => li.classList.toggle('expanded'));
             }
             
-            function updateLiveWordCount() {
-                const liveRecordingLi = document.getElementById(currentRecordingId);
-                if(liveRecordingLi) {
-                    const wordCountDisplay = liveRecordingLi.querySelector('.word-count-display');
-                    const currentText = transcriptionTextarea.value.trim();
-                    const wordCount = currentText ? currentText.split(/\s+/).filter(Boolean).length : 0;
-                    if(wordCountDisplay) wordCountDisplay.textContent = `${wordCount} words`;
-                }
-            }
-
             function addRecordingActions(liElement, rec) {
                 const buttonContainer = liElement.querySelector('.action-buttons');
                 const audioBlob = base64ToBlob(rec.audio);
@@ -381,27 +401,30 @@
                 const textUrl = URL.createObjectURL(textBlob);
                 const fileNameBase = `recording-${new Date(rec.timestamp).toISOString().replace(/:/g, '-')}`;
 
-                const downloadAudio = document.createElement('a');
-                downloadAudio.href = audioUrl;
-                downloadAudio.download = `${fileNameBase}.webm`;
-                downloadAudio.className = "p-2 rounded-full action-icon";
-                downloadAudio.title = "Download Audio";
-                downloadAudio.innerHTML = `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>`;
-
-                const downloadText = document.createElement('a');
-                downloadText.href = textUrl;
-                downloadText.download = `${fileNameBase}.txt`;
-                downloadText.className = "p-2 rounded-full action-icon";
-                downloadText.title = "Download Text";
-                downloadText.innerHTML = `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>`;
-
-                const copyButton = document.createElement('button');
-                copyButton.className = "p-2 rounded-full action-icon";
-                copyButton.title = "Copy Text";
-                copyButton.innerHTML = `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>`;
+                const downloadAudio = createButton('a', { href: audioUrl, download: `${fileNameBase}.webm`, title: "Download Audio" }, `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>`);
+                const downloadText = createButton('a', { href: textUrl, download: `${fileNameBase}.txt`, title: "Download Text" }, `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>`);
+                const copyButton = createButton('button', { title: "Copy Text" }, `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>`);
                 copyButton.onclick = () => copySpecificText(rec.transcript, copyButton);
                 
-                buttonContainer.append(downloadAudio, downloadText, copyButton);
+                const deleteButton = createButton('button', { title: "Delete Recording" }, `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>`, 'delete-icon');
+                deleteButton.onclick = () => deleteRecording(rec.id);
+                
+                buttonContainer.append(downloadAudio, downloadText, copyButton, deleteButton);
+            }
+            
+            function createButton(tag, attrs, html, extraClass = '') {
+                 const btn = document.createElement(tag);
+                 btn.className = `p-2 rounded-full action-icon ${extraClass}`;
+                 for (const key in attrs) btn[key] = attrs[key];
+                 btn.innerHTML = html;
+                 return btn;
+            }
+
+            function deleteRecording(id) {
+                recordings = recordings.filter(rec => rec.id !== id);
+                saveRecordingsToHistory();
+                document.getElementById(id)?.remove();
+                if (recordings.length === 0) noRecordingsMsg.classList.remove('hidden');
             }
 
             function loadRecordingsFromHistory() {
@@ -410,13 +433,25 @@
                     recordings = JSON.parse(savedRecordings);
                     if (recordings.length > 0) noRecordingsMsg.classList.add('hidden');
                     recordings.forEach(rec => createAndDisplayRecording(rec));
+                    updateTotalStorage();
                 }
             }
 
             function saveRecordingsToHistory() {
                 localStorage.setItem('voiceRecordings', JSON.stringify(recordings));
+                updateTotalStorage();
             }
             
+            function updateLiveWordCount() {
+                const liveRecordingLi = document.getElementById(currentRecordingId);
+                if (liveRecordingLi) {
+                    const wordCountDisplay = liveRecordingLi.querySelector('.word-count-display');
+                    const currentText = transcriptionTextarea.value.trim();
+                    const wordCount = currentText ? currentText.split(/\s+/).filter(Boolean).length : 0;
+                    if (wordCountDisplay) wordCountDisplay.textContent = `${wordCount} words`;
+                }
+            }
+
             function copySpecificText(text, buttonElement) {
                 if (!text) return;
                 navigator.clipboard.writeText(text).then(() => {
@@ -425,11 +460,25 @@
                     setTimeout(() => { buttonElement.innerHTML = originalIcon; }, 2000);
                 }).catch(err => console.error('Failed to copy text:', err));
             }
-            
+
             function formatDuration(seconds) {
                 const min = Math.floor(seconds / 60).toString().padStart(2, '0');
                 const sec = (seconds % 60).toString().padStart(2, '0');
                 return `${min}:${sec}`;
+            }
+
+            function formatFileSize(bytes) {
+                if (bytes === 0) return '0 Bytes';
+                const k = 1024;
+                const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+                const i = Math.floor(Math.log(bytes) / Math.log(k));
+                return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+            }
+
+            function updateTotalStorage() {
+                const storedData = localStorage.getItem('voiceRecordings');
+                const size = storedData ? new Blob([storedData]).size : 0;
+                totalStorageEl.textContent = `Total Storage Used: ${formatFileSize(size)}`;
             }
 
             function formatRelativeTime(isoTimestamp) {
