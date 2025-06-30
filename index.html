@@ -61,10 +61,18 @@
 
     <div class="w-full max-w-2xl bg-zinc-800 rounded-2xl shadow-lg p-6 md:p-8 space-y-6 border border-zinc-700">
         
-        <!-- Header -->
-        <div class="text-center">
-            <h1 class="text-2xl md:text-3xl font-bold text-zinc-100">Voice-to-Text & Recorder</h1>
-            <p class="text-zinc-400 mt-2">Get a transcription and a local audio recording of your speech.</p>
+        <!-- Header & Folder Management -->
+        <div class="flex justify-between items-start">
+            <div class="text-left">
+                <h1 class="text-2xl md:text-3xl font-bold text-zinc-100">Voice-to-Text & Recorder</h1>
+                <p class="text-zinc-400 mt-2 text-sm">Get a transcription and a local audio recording.</p>
+            </div>
+            <div class="flex items-center gap-2 flex-shrink-0">
+                <select id="folderSelect" class="bg-zinc-700 border border-zinc-600 rounded-lg py-1 px-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none transition"></select>
+                <button id="newFolderBtn" class="p-1.5 bg-zinc-700 hover:bg-zinc-600 rounded-lg" title="New Folder">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h5l2 3h9a2 2 0 012 2v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"></path></svg>
+                </button>
+            </div>
         </div>
 
         <!-- Error/Info Messages -->
@@ -104,6 +112,7 @@
                 </button>
             </div>
         </div>
+        <p id="folderIndicator" class="text-center text-xs text-zinc-500 -mt-4"></p>
 
         <!-- Text Area -->
         <div>
@@ -122,7 +131,7 @@
              </div>
              <div class="bg-zinc-900/50 rounded-lg p-2 max-h-56 overflow-y-auto" id="recordingsListContainer">
                 <ul id="recordingsList" class="space-y-2"></ul>
-                <p id="noRecordings" class="text-zinc-500 text-sm text-center p-4">No recordings yet.</p>
+                <p id="noRecordings" class="text-zinc-500 text-sm text-center p-4">No recordings in this folder.</p>
              </div>
         </div>
     </div>
@@ -130,54 +139,48 @@
     <script>
         document.addEventListener('DOMContentLoaded', () => {
             const DB_NAME = 'VoiceRecordingsDB';
-            const STORE_NAME = 'recordings';
+            const FOLDER_STORE = 'folders';
+            const RECORDING_STORE = 'recordings';
             let db;
 
             // --- IndexedDB Helper Functions ---
             function openDB() {
                 return new Promise((resolve, reject) => {
-                    const request = indexedDB.open(DB_NAME, 1);
+                    const request = indexedDB.open(DB_NAME, 2);
                     request.onerror = () => reject("Error opening DB");
-                    request.onsuccess = () => {
-                        db = request.result;
-                        resolve(db);
-                    };
+                    request.onsuccess = () => { db = request.result; resolve(db); };
                     request.onupgradeneeded = (event) => {
                         const db = event.target.result;
-                        db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+                        if (!db.objectStoreNames.contains(RECORDING_STORE)) {
+                            db.createObjectStore(RECORDING_STORE, { keyPath: 'id' });
+                        }
+                        if (!db.objectStoreNames.contains(FOLDER_STORE)) {
+                            db.createObjectStore(FOLDER_STORE, { keyPath: 'id' });
+                        }
                     };
                 });
             }
 
-            function saveRecordingToDB(recording) {
+            function dbAction(storeName, mode, action) {
                 return new Promise((resolve, reject) => {
-                    const transaction = db.transaction([STORE_NAME], 'readwrite');
-                    const store = transaction.objectStore(STORE_NAME);
-                    const request = store.put(recording);
-                    request.onsuccess = () => resolve(request.result);
-                    request.onerror = () => reject(request.error);
+                    if (!db) { reject("DB not open"); return; }
+                    const transaction = db.transaction([storeName], mode);
+                    const store = transaction.objectStore(storeName);
+                    action(store, resolve, reject);
                 });
             }
 
-            function getAllRecordingsFromDB() {
-                return new Promise((resolve, reject) => {
-                    const transaction = db.transaction([STORE_NAME], 'readonly');
-                    const store = transaction.objectStore(STORE_NAME);
-                    const request = store.getAll();
-                    request.onsuccess = () => resolve(request.result.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))); // Sort newest first
-                    request.onerror = () => reject(request.error);
-                });
-            }
-            
-            function deleteRecordingFromDB(id) {
-                 return new Promise((resolve, reject) => {
-                    const transaction = db.transaction([STORE_NAME], 'readwrite');
-                    const store = transaction.objectStore(STORE_NAME);
-                    const request = store.delete(id);
-                    request.onsuccess = () => resolve();
-                    request.onerror = () => reject(request.error);
-                });
-            }
+            const dbFolders = {
+                get: (id) => dbAction(FOLDER_STORE, 'readonly', (store, resolve) => store.get(id).onsuccess = e => resolve(e.target.result)),
+                getAll: () => dbAction(FOLDER_STORE, 'readonly', (store, resolve) => store.getAll().onsuccess = e => resolve(e.target.result)),
+                put: (data) => dbAction(FOLDER_STORE, 'readwrite', (store, resolve) => store.put(data).onsuccess = e => resolve(e.target.result)),
+            };
+
+            const dbRecordings = {
+                put: (data) => dbAction(RECORDING_STORE, 'readwrite', (store, resolve) => store.put(data).onsuccess = e => resolve(e.target.result)),
+                getAll: () => dbAction(RECORDING_STORE, 'readonly', (store, resolve) => store.getAll().onsuccess = e => resolve(e.target.result)),
+                delete: (id) => dbAction(RECORDING_STORE, 'readwrite', (store, resolve) => store.delete(id).onsuccess = () => resolve()),
+            };
 
             // --- App Code ---
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -199,13 +202,16 @@
             const pauseBtn = document.getElementById('pauseBtn');
             const resumeBtn = document.getElementById('resumeBtn');
             const stopBtn = document.getElementById('stopBtn');
+            const newFolderBtn = document.getElementById('newFolderBtn');
+            const folderSelect = document.getElementById('folderSelect');
+            const folderIndicator = document.getElementById('folderIndicator');
             const transcriptionTextarea = document.getElementById('transcription');
             const statusDiv = document.getElementById('status');
             const recordingsList = document.getElementById('recordingsList');
             const noRecordingsMsg = document.getElementById('noRecordings');
             const totalStorageEl = document.getElementById('totalStorage');
             
-            let recognition = new SpeechRecognition();
+            let recognition;
             let mediaRecorder;
             let audioChunks = [];
             let state = 'idle'; // idle, recording, paused
@@ -226,9 +232,10 @@
 
             async function initialize() {
                 await openDB();
+                await setupFolders();
                 populateLanguages();
                 setupRecognition();
-                loadRecordingsFromHistory();
+                await renderRecordingsForCurrentFolder();
                 attachEventListeners();
                 updateUIForState();
             }
@@ -240,7 +247,28 @@
                 });
             }
 
+            async function setupFolders() {
+                let folders = await dbFolders.getAll();
+                if (folders.length === 0) {
+                    const defaultFolder = { id: 'default', name: 'Default' };
+                    await dbFolders.put(defaultFolder);
+                    folders.push(defaultFolder);
+                }
+                folderSelect.innerHTML = '';
+                folders.forEach(folder => {
+                    const option = new Option(folder.name, folder.id);
+                    folderSelect.add(option);
+                });
+                updateFolderIndicator();
+            }
+
+            function updateFolderIndicator() {
+                const selectedFolderName = folderSelect.options[folderSelect.selectedIndex].text;
+                folderIndicator.textContent = `Recording will be saved to "${selectedFolderName}" folder.`;
+            }
+
             function setupRecognition() {
+                recognition = new SpeechRecognition();
                 recognition.lang = languageSelect.value;
                 recognition.continuous = true;
                 recognition.interimResults = true;
@@ -265,7 +293,7 @@
                         pauseRecording();
                         statusDiv.textContent = 'No speech detected. Paused.';
                     } else if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
-                        permissionGuideDiv.classList.remove('hidden');
+                        document.getElementById('permission-guide').classList.remove('hidden');
                         statusDiv.textContent = 'Permission denied.';
                         state = 'idle';
                         updateUIForState();
@@ -295,13 +323,13 @@
                     final_transcript = '';
                     recognition.start();
 
-                    permissionGuideDiv.classList.add('hidden');
+                    document.getElementById('permission-guide').classList.add('hidden');
                 } catch (err) {
                     state = 'idle';
                     updateUIForState();
                     console.error("Error starting recording:", err);
                     if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-                        permissionGuideDiv.classList.remove('hidden');
+                        document.getElementById('permission-guide').classList.remove('hidden');
                         statusDiv.textContent = 'Microphone permission denied.';
                     } else {
                         statusDiv.textContent = 'Could not start recording.';
@@ -347,14 +375,15 @@
                 const recordingData = {
                     id: currentRecordingId,
                     timestamp: new Date().toISOString(),
-                    audio: audioBlob, // Store Blob directly
+                    audio: audioBlob,
                     transcript: transcriptText,
                     title: title,
                     duration: secondsElapsed,
                     wordCount: wordCount,
+                    folderId: folderSelect.value
                 };
                 
-                await saveRecordingToDB(recordingData);
+                await dbRecordings.put(recordingData);
                 updateRecordingInList(recordingData);
                 updateTotalStorage();
             }
@@ -453,6 +482,21 @@
                 buttonContainer.append(downloadAudio, downloadText, copyButton, deleteButton);
             }
 
+            async function renderRecordingsForCurrentFolder() {
+                const folderId = folderSelect.value;
+                const allRecordings = await dbRecordings.getAll();
+                const filteredRecordings = allRecordings.filter(r => r.folderId === folderId);
+                
+                recordingsList.innerHTML = '';
+                if (filteredRecordings.length > 0) {
+                    noRecordingsMsg.classList.add('hidden');
+                    filteredRecordings.forEach(createAndDisplayRecording);
+                } else {
+                    noRecordingsMsg.classList.remove('hidden');
+                }
+                updateTotalStorage();
+            }
+
             function createButton(tag, attrs, html, extraClass = '') {
                  const btn = document.createElement(tag);
                  btn.className = `p-2 rounded-full action-icon ${extraClass}`;
@@ -462,23 +506,13 @@
             }
 
             async function deleteRecording(id) {
-                await deleteRecordingFromDB(id);
-                document.getElementById(id)?.remove();
-                const recordings = await getAllRecordingsFromDB();
-                if (recordings.length === 0) noRecordingsMsg.classList.remove('hidden');
-                updateTotalStorage();
+                await dbRecordings.delete(id);
+                await renderRecordingsForCurrentFolder();
             }
-
-            async function loadRecordingsFromHistory() {
-                const recordings = await getAllRecordingsFromDB();
-                if (recordings.length > 0) noRecordingsMsg.classList.add('hidden');
-                recordings.forEach(rec => createAndDisplayRecording(rec));
-                updateTotalStorage();
-            }
-
+            
             async function updateTotalStorage() {
-                const recordings = await getAllRecordingsFromDB();
-                const totalSize = recordings.reduce((acc, rec) => acc + rec.audio.size, 0);
+                const allRecordings = await dbRecordings.getAll();
+                const totalSize = allRecordings.reduce((acc, rec) => acc + rec.audio.size, 0);
                 totalStorageEl.textContent = `Total Storage Used: ${formatFileSize(totalSize)}`;
             }
 
@@ -535,21 +569,6 @@
                 return past.toLocaleDateString();
             }
 
-            function base64ToBlob(base64) {
-                try {
-                    const parts = base64.split(';base64,');
-                    const contentType = parts[0].split(':')[1];
-                    const raw = window.atob(parts[1]);
-                    const rawLength = raw.length;
-                    const uInt8Array = new Uint8Array(rawLength);
-                    for (let i = 0; i < rawLength; ++i) uInt8Array[i] = raw.charCodeAt(i);
-                    return new Blob([uInt8Array], { type: contentType });
-                } catch(e) {
-                    console.error("Failed to convert base64 to Blob:", e);
-                    return new Blob([]);
-                }
-            }
-
             function attachEventListeners() {
                 startBtn.addEventListener('click', startRecording);
                 pauseBtn.addEventListener('click', pauseRecording);
@@ -558,7 +577,24 @@
                 
                 languageSelect.addEventListener('change', () => {
                     if (state !== 'idle') stopAndFinalizeRecording();
-                    recognition.lang = languageSelect.value;
+                    setupRecognition();
+                });
+
+                newFolderBtn.addEventListener('click', async () => {
+                    const folderName = prompt("Enter a name for the new folder:");
+                    if (folderName) {
+                        const newFolder = { id: `folder-${Date.now()}`, name: folderName };
+                        await dbFolders.put(newFolder);
+                        await setupFolders();
+                        folderSelect.value = newFolder.id;
+                        await renderRecordingsForCurrentFolder();
+                        updateFolderIndicator();
+                    }
+                });
+
+                folderSelect.addEventListener('change', () => {
+                    renderRecordingsForCurrentFolder();
+                    updateFolderIndicator();
                 });
             }
 
