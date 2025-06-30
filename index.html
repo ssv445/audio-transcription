@@ -38,6 +38,9 @@
         .action-icon:hover {
             background-color: #3f3f46;
         }
+        .hidden {
+            display: none;
+        }
     </style>
 </head>
 <body class="bg-zinc-900 text-white flex items-center justify-center min-h-screen p-4">
@@ -68,10 +71,24 @@
                 <label for="language" class="sr-only">Language</label>
                 <select id="language" class="w-full bg-zinc-700 border border-zinc-600 rounded-lg py-2 px-3 focus:ring-2 focus:ring-indigo-500 focus:outline-none transition"></select>
             </div>
-            <button id="recordBtn" class="flex items-center justify-center w-full sm:w-auto bg-indigo-600 hover:bg-indigo-700 transition-all duration-200 text-white font-semibold py-2 px-6 rounded-lg shadow-md">
-                <svg id="micIcon" class="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path></svg>
-                <span id="recordBtnText">Start Recording</span>
-            </button>
+            <div id="controlsContainer" class="flex items-center gap-2">
+                 <button id="startBtn" class="flex items-center justify-center w-full sm:w-auto bg-indigo-600 hover:bg-indigo-700 transition-all duration-200 text-white font-semibold py-2 px-6 rounded-lg shadow-md">
+                    <svg class="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path></svg>
+                    <span>Start</span>
+                </button>
+                <button id="pauseBtn" class="hidden flex items-center justify-center w-full sm:w-auto bg-yellow-500 hover:bg-yellow-600 transition-all duration-200 text-white font-semibold py-2 px-6 rounded-lg shadow-md">
+                    <svg class="w-6 h-6 mr-2" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zM7 8a1 1 0 012 0v4a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"></path></svg>
+                    <span>Pause</span>
+                </button>
+                 <button id="resumeBtn" class="hidden flex items-center justify-center w-full sm:w-auto bg-green-500 hover:bg-green-600 transition-all duration-200 text-white font-semibold py-2 px-6 rounded-lg shadow-md">
+                    <svg class="w-6 h-6 mr-2" fill="currentColor" viewBox="0 0 20 20"><path d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z"></path></svg>
+                    <span>Resume</span>
+                </button>
+                <button id="stopBtn" class="hidden flex items-center justify-center w-full sm:w-auto bg-red-600 hover:bg-red-700 transition-all duration-200 text-white font-semibold py-2 px-6 rounded-lg shadow-md">
+                     <svg class="w-6 h-6 mr-2" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 11-16 0 8 8 0 0116 0zM8 7a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1zm4 0a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1z" clip-rule="evenodd"></path></svg>
+                    <span>Stop</span>
+                </button>
+            </div>
         </div>
 
         <!-- Text Area -->
@@ -102,10 +119,7 @@
             
             const isApiSupported = SpeechRecognition && navigator.mediaDevices && navigator.mediaDevices.getUserMedia;
 
-            if (window.location.protocol !== 'https:') {
-                secureConnectionMsg.classList.remove('hidden');
-            }
-            
+            if (window.location.protocol !== 'https:') secureConnectionMsg.classList.remove('hidden');
             if (!isApiSupported) {
                 unsupportedDiv.classList.remove('hidden');
                 document.querySelector('.w-full.max-w-2xl').style.display = 'none';
@@ -113,8 +127,10 @@
             }
 
             const languageSelect = document.getElementById('language');
-            const recordBtn = document.getElementById('recordBtn');
-            const recordBtnText = document.getElementById('recordBtnText');
+            const startBtn = document.getElementById('startBtn');
+            const pauseBtn = document.getElementById('pauseBtn');
+            const resumeBtn = document.getElementById('resumeBtn');
+            const stopBtn = document.getElementById('stopBtn');
             const transcriptionTextarea = document.getElementById('transcription');
             const statusDiv = document.getElementById('status');
             const recordingsList = document.getElementById('recordingsList');
@@ -123,7 +139,7 @@
             let recognition = new SpeechRecognition();
             let mediaRecorder;
             let audioChunks = [];
-            let isRecording = false;
+            let state = 'idle'; // idle, recording, paused
             let final_transcript = '';
             let recordings = [];
             let timerInterval;
@@ -145,6 +161,7 @@
                 setupRecognition();
                 loadRecordingsFromHistory();
                 attachEventListeners();
+                updateUIForState();
             }
 
             function populateLanguages() {
@@ -161,16 +178,16 @@
 
                 recognition.onresult = (event) => {
                     let interim_transcript = '';
-                    let current_final = '';
                     for (let i = event.resultIndex; i < event.results.length; ++i) {
+                        const transcript = event.results[i][0].transcript;
                         if (event.results[i].isFinal) {
-                            current_final += event.results[i][0].transcript + ' ';
+                            final_transcript += transcript + ' ';
                         } else {
-                            interim_transcript += event.results[i][0].transcript;
+                            interim_transcript += transcript;
                         }
                     }
-                    final_transcript += current_final;
                     transcriptionTextarea.value = final_transcript + interim_transcript;
+                    updateLiveWordCount();
                 };
 
                 recognition.onerror = (event) => {
@@ -178,25 +195,20 @@
                     if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
                         permissionGuideDiv.classList.remove('hidden');
                         statusDiv.textContent = 'Permission denied.';
+                        state = 'idle';
+                        updateUIForState();
                     } else {
                         statusDiv.textContent = `Error: ${event.error}`;
                     }
                 };
             }
-
-            async function toggleRecording() {
-                if (isRecording) {
-                    stopRecording();
-                } else {
-                    await startRecording();
-                }
-            }
             
             async function startRecording() {
-                if (isRecording) return;
+                if (state !== 'idle') return;
                 try {
                     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                    isRecording = true;
+                    state = 'recording';
+                    updateUIForState();
                     currentRecordingId = `rec-${Date.now()}`;
                     
                     addRecordingToList({ id: currentRecordingId, isLive: true });
@@ -211,13 +223,10 @@
                     final_transcript = '';
                     recognition.start();
 
-                    statusDiv.textContent = 'Listening...';
-                    recordBtn.classList.add('bg-red-600', 'hover:bg-red-700', 'pulsing');
-                    recordBtn.classList.remove('bg-indigo-600', 'hover:bg-indigo-700');
-                    recordBtnText.textContent = 'Stop Recording';
                     permissionGuideDiv.classList.add('hidden');
                 } catch (err) {
-                    isRecording = false;
+                    state = 'idle';
+                    updateUIForState();
                     console.error("Error starting recording:", err);
                     if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
                         permissionGuideDiv.classList.remove('hidden');
@@ -228,12 +237,32 @@
                 }
             }
 
-            function stopRecording() {
-                if (!isRecording) return;
+            function pauseRecording() {
+                if (state !== 'recording') return;
+                state = 'paused';
                 recognition.stop();
-                mediaRecorder.stop();
+                mediaRecorder.pause();
+                clearInterval(timerInterval);
+                updateUIForState();
             }
 
+            function resumeRecording() {
+                if (state !== 'paused') return;
+                state = 'recording';
+                recognition.start();
+                mediaRecorder.resume();
+                startTimer();
+                updateUIForState();
+            }
+
+            function stopAndFinalizeRecording() {
+                if (state === 'idle') return;
+                state = 'idle';
+                if (recognition) recognition.stop();
+                if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+                updateUIForState();
+            }
+            
             function finalizeRecording(stream) {
                 if (stream) stream.getTracks().forEach(track => track.stop());
 
@@ -242,59 +271,60 @@
                 const reader = new FileReader();
                 reader.onloadend = () => {
                     const transcriptText = final_transcript.trim();
-                    const title = transcriptText ? transcriptText.split(' ').slice(0, 5).join(' ') + '...' : 'Untitled Recording';
+                    const title = transcriptText ? transcriptText.split(' ').slice(0, 5).join(' ') + (transcriptText.split(' ').length > 5 ? '...' : '') : 'Untitled Recording';
+                    const wordCount = transcriptText ? transcriptText.split(/\s+/).filter(Boolean).length : 0;
+                    
                     const recordingData = {
                         id: currentRecordingId,
                         timestamp: new Date().toISOString(),
                         audio: reader.result,
                         transcript: transcriptText,
                         title: title,
-                        duration: secondsElapsed
+                        duration: secondsElapsed,
+                        wordCount: wordCount,
                     };
-                    recordings.unshift(recordingData); // Add to beginning
+                    recordings.unshift(recordingData);
                     saveRecordingsToHistory();
                     updateRecordingInList(recordingData);
                 };
                 reader.readAsDataURL(audioBlob);
-
-                isRecording = false;
-                statusDiv.textContent = 'Click "Start Recording" to begin.';
-                recordBtn.classList.remove('bg-red-600', 'hover:bg-red-700', 'pulsing');
-                recordBtn.classList.add('bg-indigo-600', 'hover:bg-indigo-700');
-                recordBtnText.textContent = 'Start Recording';
             }
 
-            function formatDuration(seconds) {
-                const min = Math.floor(seconds / 60).toString().padStart(2, '0');
-                const sec = (seconds % 60).toString().padStart(2, '0');
-                return `${min}:${sec}`;
+            function updateUIForState() {
+                startBtn.classList.toggle('hidden', state !== 'idle');
+                pauseBtn.classList.toggle('hidden', state !== 'recording');
+                resumeBtn.classList.toggle('hidden', state !== 'paused');
+                stopBtn.classList.toggle('hidden', state === 'idle');
+
+                switch(state) {
+                    case 'idle':
+                        statusDiv.textContent = 'Ready to go!';
+                        break;
+                    case 'recording':
+                        statusDiv.textContent = 'Listening...';
+                        break;
+                    case 'paused':
+                        statusDiv.textContent = 'Recording paused.';
+                        break;
+                }
             }
 
-            function formatRelativeTime(isoTimestamp) {
-                const now = new Date();
-                const past = new Date(isoTimestamp);
-                const seconds = Math.floor((now - past) / 1000);
-
-                if (seconds < 10) return "just now";
-                if (seconds < 60) return `${seconds} seconds ago`;
-
-                const minutes = Math.floor(seconds / 60);
-                if (minutes < 60) return `${minutes} minute${minutes > 1 ? 's' : ''} ago`;
-
-                const hours = Math.floor(minutes / 60);
-                if (hours < 24) return `${hours} hour${hours > 1 ? 's' : ''} ago`;
-
-                const days = Math.floor(hours / 24);
-                if (days < 7) return `${days} day${days > 1 ? 's' : ''} ago`;
-
-                return past.toLocaleDateString();
+            function startTimer() {
+                 const li = document.getElementById(currentRecordingId);
+                 if(!li) return;
+                 const timerDisplay = li.querySelector('.timer-display');
+                 timerInterval = setInterval(() => {
+                    secondsElapsed++;
+                    timerDisplay.textContent = formatDuration(secondsElapsed);
+                }, 1000);
             }
-
+            
             function createAndDisplayRecording(rec) {
+                noRecordingsMsg.classList.add('hidden');
                 const li = document.createElement('li');
                 li.id = rec.id;
                 li.className = 'p-3 bg-zinc-700/50 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3';
-                recordingsList.prepend(li); // Add to top of the list
+                recordingsList.append(li);
                 updateRecordingInList(rec);
             }
 
@@ -304,19 +334,17 @@
 
                 const li = document.createElement('li');
                 li.id = rec.id;
-                li.className = 'p-3 bg-zinc-700/50 rounded-lg flex items-center justify-between gap-3';
+                li.className = 'p-3 bg-zinc-700/50 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3';
                 li.innerHTML = `
-                    <div class="flex-grow">
+                    <div class="flex-grow overflow-hidden">
                         <div class="font-medium text-zinc-200">Recording in progress...</div>
-                        <div class="text-xs text-zinc-400 timer-display">00:00</div>
+                        <div class="text-xs text-zinc-400">
+                             <span class="timer-display">00:00</span> &middot; <span class="word-count-display">0 words</span>
+                        </div>
                     </div>
                 `;
                 recordingsList.prepend(li);
-
-                timerInterval = setInterval(() => {
-                    secondsElapsed++;
-                    li.querySelector('.timer-display').textContent = formatDuration(secondsElapsed);
-                }, 1000);
+                startTimer();
             }
 
             function updateRecordingInList(rec) {
@@ -327,12 +355,22 @@
                     <div class="flex-grow overflow-hidden">
                         <div class="font-medium text-zinc-200 truncate" title="${rec.title}">${rec.title}</div>
                         <div class="text-xs text-zinc-400">
-                            <span>${formatRelativeTime(rec.timestamp)}</span> &middot; <span>${formatDuration(rec.duration)}</span>
+                            <span>${formatRelativeTime(rec.timestamp)}</span> &middot; <span>${formatDuration(rec.duration)}</span> &middot; <span>${rec.wordCount} words</span>
                         </div>
                     </div>
                     <div class="flex items-center gap-2 action-buttons flex-shrink-0"></div>
                 `;
                 addRecordingActions(li, rec);
+            }
+            
+            function updateLiveWordCount() {
+                const liveRecordingLi = document.getElementById(currentRecordingId);
+                if(liveRecordingLi) {
+                    const wordCountDisplay = liveRecordingLi.querySelector('.word-count-display');
+                    const currentText = transcriptionTextarea.value.trim();
+                    const wordCount = currentText ? currentText.split(/\s+/).filter(Boolean).length : 0;
+                    if(wordCountDisplay) wordCountDisplay.textContent = `${wordCount} words`;
+                }
             }
 
             function addRecordingActions(liElement, rec) {
@@ -343,7 +381,6 @@
                 const textUrl = URL.createObjectURL(textBlob);
                 const fileNameBase = `recording-${new Date(rec.timestamp).toISOString().replace(/:/g, '-')}`;
 
-                // Download Audio
                 const downloadAudio = document.createElement('a');
                 downloadAudio.href = audioUrl;
                 downloadAudio.download = `${fileNameBase}.webm`;
@@ -351,7 +388,6 @@
                 downloadAudio.title = "Download Audio";
                 downloadAudio.innerHTML = `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>`;
 
-                // Download Text
                 const downloadText = document.createElement('a');
                 downloadText.href = textUrl;
                 downloadText.download = `${fileNameBase}.txt`;
@@ -359,7 +395,6 @@
                 downloadText.title = "Download Text";
                 downloadText.innerHTML = `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>`;
 
-                // Copy Text
                 const copyButton = document.createElement('button');
                 copyButton.className = "p-2 rounded-full action-icon";
                 copyButton.title = "Copy Text";
@@ -390,21 +425,56 @@
                     setTimeout(() => { buttonElement.innerHTML = originalIcon; }, 2000);
                 }).catch(err => console.error('Failed to copy text:', err));
             }
+            
+            function formatDuration(seconds) {
+                const min = Math.floor(seconds / 60).toString().padStart(2, '0');
+                const sec = (seconds % 60).toString().padStart(2, '0');
+                return `${min}:${sec}`;
+            }
+
+            function formatRelativeTime(isoTimestamp) {
+                const now = new Date();
+                const past = new Date(isoTimestamp);
+                const seconds = Math.floor((now - past) / 1000);
+
+                if (seconds < 10) return "just now";
+                if (seconds < 60) return `${seconds}s ago`;
+
+                const minutes = Math.floor(seconds / 60);
+                if (minutes < 60) return `${minutes}m ago`;
+
+                const hours = Math.floor(minutes / 60);
+                if (hours < 24) return `${hours}h ago`;
+                
+                const days = Math.floor(hours / 24);
+                if (days < 7) return `${days}d ago`;
+
+                return past.toLocaleDateString();
+            }
 
             function base64ToBlob(base64) {
-                const parts = base64.split(';base64,');
-                const contentType = parts[0].split(':')[1];
-                const raw = window.atob(parts[1]);
-                const rawLength = raw.length;
-                const uInt8Array = new Uint8Array(rawLength);
-                for (let i = 0; i < rawLength; ++i) uInt8Array[i] = raw.charCodeAt(i);
-                return new Blob([uInt8Array], { type: contentType });
+                try {
+                    const parts = base64.split(';base64,');
+                    const contentType = parts[0].split(':')[1];
+                    const raw = window.atob(parts[1]);
+                    const rawLength = raw.length;
+                    const uInt8Array = new Uint8Array(rawLength);
+                    for (let i = 0; i < rawLength; ++i) uInt8Array[i] = raw.charCodeAt(i);
+                    return new Blob([uInt8Array], { type: contentType });
+                } catch(e) {
+                    console.error("Failed to convert base64 to Blob:", e);
+                    return new Blob([]);
+                }
             }
 
             function attachEventListeners() {
-                recordBtn.addEventListener('click', toggleRecording);
+                startBtn.addEventListener('click', startRecording);
+                pauseBtn.addEventListener('click', pauseRecording);
+                resumeBtn.addEventListener('click', resumeRecording);
+                stopBtn.addEventListener('click', stopAndFinalizeRecording);
+                
                 languageSelect.addEventListener('change', () => {
-                    if (isRecording) stopRecording();
+                    if (state !== 'idle') stopAndFinalizeRecording();
                     recognition.lang = languageSelect.value;
                 });
             }
