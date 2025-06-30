@@ -129,6 +129,57 @@
 
     <script>
         document.addEventListener('DOMContentLoaded', () => {
+            const DB_NAME = 'VoiceRecordingsDB';
+            const STORE_NAME = 'recordings';
+            let db;
+
+            // --- IndexedDB Helper Functions ---
+            function openDB() {
+                return new Promise((resolve, reject) => {
+                    const request = indexedDB.open(DB_NAME, 1);
+                    request.onerror = () => reject("Error opening DB");
+                    request.onsuccess = () => {
+                        db = request.result;
+                        resolve(db);
+                    };
+                    request.onupgradeneeded = (event) => {
+                        const db = event.target.result;
+                        db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+                    };
+                });
+            }
+
+            function saveRecordingToDB(recording) {
+                return new Promise((resolve, reject) => {
+                    const transaction = db.transaction([STORE_NAME], 'readwrite');
+                    const store = transaction.objectStore(STORE_NAME);
+                    const request = store.put(recording);
+                    request.onsuccess = () => resolve(request.result);
+                    request.onerror = () => reject(request.error);
+                });
+            }
+
+            function getAllRecordingsFromDB() {
+                return new Promise((resolve, reject) => {
+                    const transaction = db.transaction([STORE_NAME], 'readonly');
+                    const store = transaction.objectStore(STORE_NAME);
+                    const request = store.getAll();
+                    request.onsuccess = () => resolve(request.result.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))); // Sort newest first
+                    request.onerror = () => reject(request.error);
+                });
+            }
+            
+            function deleteRecordingFromDB(id) {
+                 return new Promise((resolve, reject) => {
+                    const transaction = db.transaction([STORE_NAME], 'readwrite');
+                    const store = transaction.objectStore(STORE_NAME);
+                    const request = store.delete(id);
+                    request.onsuccess = () => resolve();
+                    request.onerror = () => reject(request.error);
+                });
+            }
+
+            // --- App Code ---
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             const unsupportedDiv = document.getElementById('unsupported');
             const secureConnectionMsg = document.getElementById('secure-connection-msg');
@@ -159,7 +210,6 @@
             let audioChunks = [];
             let state = 'idle'; // idle, recording, paused
             let final_transcript = '';
-            let recordings = [];
             let timerInterval;
             let secondsElapsed = 0;
             let currentRecordingId = null;
@@ -174,7 +224,8 @@
                 { name: 'العربية', code: 'ar-SA' }
             ];
 
-            function initialize() {
+            async function initialize() {
+                await openDB();
                 populateLanguages();
                 setupRecognition();
                 loadRecordingsFromHistory();
@@ -262,9 +313,7 @@
                 if (state !== 'recording') return;
                 state = 'paused';
                 recognition.stop();
-                if (mediaRecorder && mediaRecorder.state === 'recording') {
-                    mediaRecorder.pause();
-                }
+                if (mediaRecorder && mediaRecorder.state === 'recording') mediaRecorder.pause();
                 clearInterval(timerInterval);
                 updateUIForState();
             }
@@ -273,9 +322,7 @@
                 if (state !== 'paused') return;
                 state = 'recording';
                 recognition.start();
-                if (mediaRecorder && mediaRecorder.state === 'paused') {
-                    mediaRecorder.resume();
-                }
+                if (mediaRecorder && mediaRecorder.state === 'paused') mediaRecorder.resume();
                 startTimer();
                 updateUIForState();
             }
@@ -288,31 +335,28 @@
                 updateUIForState();
             }
             
-            function finalizeRecording(stream) {
+            async function finalizeRecording(stream) {
                 if (stream) stream.getTracks().forEach(track => track.stop());
 
                 clearInterval(timerInterval);
                 const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
-                const reader = new FileReader();
-                reader.onloadend = () => {
-                    const transcriptText = final_transcript.trim();
-                    const title = transcriptText ? transcriptText.split(' ').slice(0, 5).join(' ') + (transcriptText.split(' ').length > 5 ? '...' : '') : 'Untitled Recording';
-                    const wordCount = transcriptText ? transcriptText.split(/\s+/).filter(Boolean).length : 0;
-                    
-                    const recordingData = {
-                        id: currentRecordingId,
-                        timestamp: new Date().toISOString(),
-                        audio: reader.result,
-                        transcript: transcriptText,
-                        title: title,
-                        duration: secondsElapsed,
-                        wordCount: wordCount,
-                    };
-                    recordings.unshift(recordingData);
-                    saveRecordingsToHistory();
-                    updateRecordingInList(recordingData);
+                const transcriptText = final_transcript.trim();
+                const title = transcriptText ? transcriptText.split(' ').slice(0, 5).join(' ') + (transcriptText.split(' ').length > 5 ? '...' : '') : 'Untitled Recording';
+                const wordCount = transcriptText ? transcriptText.split(/\s+/).filter(Boolean).length : 0;
+                
+                const recordingData = {
+                    id: currentRecordingId,
+                    timestamp: new Date().toISOString(),
+                    audio: audioBlob, // Store Blob directly
+                    transcript: transcriptText,
+                    title: title,
+                    duration: secondsElapsed,
+                    wordCount: wordCount,
                 };
-                reader.readAsDataURL(audioBlob);
+                
+                await saveRecordingToDB(recordingData);
+                updateRecordingInList(recordingData);
+                updateTotalStorage();
             }
 
             function updateUIForState() {
@@ -371,9 +415,7 @@
                 if (!li) return;
                 
                 li.className = 'bg-zinc-700/50 rounded-lg';
-
-                const audioBlob = base64ToBlob(rec.audio);
-                const fileSize = formatFileSize(audioBlob.size);
+                const fileSize = formatFileSize(rec.audio.size);
 
                 li.innerHTML = `
                     <div class="recording-header p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -395,8 +437,7 @@
             
             function addRecordingActions(liElement, rec) {
                 const buttonContainer = liElement.querySelector('.action-buttons');
-                const audioBlob = base64ToBlob(rec.audio);
-                const audioUrl = URL.createObjectURL(audioBlob);
+                const audioUrl = URL.createObjectURL(rec.audio);
                 const textBlob = new Blob([rec.transcript], { type: 'text/plain' });
                 const textUrl = URL.createObjectURL(textBlob);
                 const fileNameBase = `recording-${new Date(rec.timestamp).toISOString().replace(/:/g, '-')}`;
@@ -411,7 +452,7 @@
                 
                 buttonContainer.append(downloadAudio, downloadText, copyButton, deleteButton);
             }
-            
+
             function createButton(tag, attrs, html, extraClass = '') {
                  const btn = document.createElement(tag);
                  btn.className = `p-2 rounded-full action-icon ${extraClass}`;
@@ -420,28 +461,27 @@
                  return btn;
             }
 
-            function deleteRecording(id) {
-                recordings = recordings.filter(rec => rec.id !== id);
-                saveRecordingsToHistory();
+            async function deleteRecording(id) {
+                await deleteRecordingFromDB(id);
                 document.getElementById(id)?.remove();
+                const recordings = await getAllRecordingsFromDB();
                 if (recordings.length === 0) noRecordingsMsg.classList.remove('hidden');
-            }
-
-            function loadRecordingsFromHistory() {
-                const savedRecordings = localStorage.getItem('voiceRecordings');
-                if (savedRecordings) {
-                    recordings = JSON.parse(savedRecordings);
-                    if (recordings.length > 0) noRecordingsMsg.classList.add('hidden');
-                    recordings.forEach(rec => createAndDisplayRecording(rec));
-                    updateTotalStorage();
-                }
-            }
-
-            function saveRecordingsToHistory() {
-                localStorage.setItem('voiceRecordings', JSON.stringify(recordings));
                 updateTotalStorage();
             }
-            
+
+            async function loadRecordingsFromHistory() {
+                const recordings = await getAllRecordingsFromDB();
+                if (recordings.length > 0) noRecordingsMsg.classList.add('hidden');
+                recordings.forEach(rec => createAndDisplayRecording(rec));
+                updateTotalStorage();
+            }
+
+            async function updateTotalStorage() {
+                const recordings = await getAllRecordingsFromDB();
+                const totalSize = recordings.reduce((acc, rec) => acc + rec.audio.size, 0);
+                totalStorageEl.textContent = `Total Storage Used: ${formatFileSize(totalSize)}`;
+            }
+
             function updateLiveWordCount() {
                 const liveRecordingLi = document.getElementById(currentRecordingId);
                 if (liveRecordingLi) {
@@ -460,7 +500,7 @@
                     setTimeout(() => { buttonElement.innerHTML = originalIcon; }, 2000);
                 }).catch(err => console.error('Failed to copy text:', err));
             }
-
+            
             function formatDuration(seconds) {
                 const min = Math.floor(seconds / 60).toString().padStart(2, '0');
                 const sec = (seconds % 60).toString().padStart(2, '0');
@@ -473,12 +513,6 @@
                 const sizes = ['Bytes', 'KB', 'MB', 'GB'];
                 const i = Math.floor(Math.log(bytes) / Math.log(k));
                 return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-            }
-
-            function updateTotalStorage() {
-                const storedData = localStorage.getItem('voiceRecordings');
-                const size = storedData ? new Blob([storedData]).size : 0;
-                totalStorageEl.textContent = `Total Storage Used: ${formatFileSize(size)}`;
             }
 
             function formatRelativeTime(isoTimestamp) {
