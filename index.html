@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice to Text Dictation</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+        .pulsing {
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+        }
+        /* Custom scrollbar for a cleaner look */
+        textarea::-webkit-scrollbar {
+            width: 8px;
+        }
+        textarea::-webkit-scrollbar-track {
+            background: #27272a;
+        }
+        textarea::-webkit-scrollbar-thumb {
+            background-color: #52525b;
+            border-radius: 10px;
+            border: 2px solid #27272a;
+        }
+    </style>
+</head>
+<body class="bg-zinc-900 text-white flex items-center justify-center min-h-screen p-4">
+
+    <div class="w-full max-w-2xl bg-zinc-800 rounded-2xl shadow-lg p-6 md:p-8 space-y-6 border border-zinc-700">
+        
+        <!-- Header -->
+        <div class="text-center">
+            <h1 class="text-2xl md:text-3xl font-bold text-zinc-100">Voice-to-Text Dictation</h1>
+            <p class="text-zinc-400 mt-2">Select your language, press the microphone, and start speaking.</p>
+        </div>
+
+        <!-- Error/Info Messages -->
+        <div id="unsupported" class="hidden bg-red-900/50 text-red-300 p-4 rounded-lg text-center">
+            <p>Speech recognition is not supported in this browser. Please use Google Chrome on a desktop computer.</p>
+        </div>
+        <div id="secure-connection-msg" class="hidden bg-yellow-900/50 text-yellow-300 p-4 rounded-lg text-center">
+            <p>A secure (https://) connection is required for speech recognition to work. Please ensure you are on a secure site.</p>
+        </div>
+        <div id="permission-guide" class="hidden bg-blue-900/50 text-blue-300 p-4 rounded-lg space-y-2">
+            <p class="font-semibold">Microphone permission denied.</p>
+            <p class="text-sm">To use dictation, you need to allow microphone access in your browser's site settings. Look for a camera or lock icon in the address bar.</p>
+        </div>
+        
+        <!-- Controls -->
+        <div class="flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div class="w-full sm:w-auto">
+                <label for="language" class="sr-only">Language</label>
+                <select id="language" class="w-full bg-zinc-700 border border-zinc-600 rounded-lg py-2 px-3 focus:ring-2 focus:ring-indigo-500 focus:outline-none transition"></select>
+            </div>
+            <button id="recordBtn" class="flex items-center justify-center w-full sm:w-auto bg-indigo-600 hover:bg-indigo-700 transition-all duration-200 text-white font-semibold py-2 px-6 rounded-lg shadow-md">
+                <svg id="micIcon" class="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path></svg>
+                <span id="recordBtnText">Start Recording</span>
+            </button>
+        </div>
+
+        <!-- Text Area -->
+        <div>
+            <label for="transcription" class="sr-only">Transcription</label>
+            <textarea id="transcription" rows="10" class="w-full bg-zinc-900/50 border border-zinc-700 rounded-lg p-4 focus:ring-2 focus:ring-indigo-500 focus:outline-none resize-none" placeholder="Your transcribed text will appear here..."></textarea>
+        </div>
+        
+        <!-- Actions and Status -->
+        <div class="flex flex-col md:flex-row items-center justify-between gap-4">
+            <p id="status" class="text-zinc-400 text-sm h-5 flex-grow text-center md:text-left">Ready to go!</p>
+            <button id="copyBtn" class="w-full md:w-auto flex items-center justify-center bg-zinc-700 hover:bg-zinc-600 transition text-zinc-200 font-medium py-2 px-5 rounded-lg">
+                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+                <span>Copy to Clipboard</span>
+            </button>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            const unsupportedDiv = document.getElementById('unsupported');
+            const secureConnectionMsg = document.getElementById('secure-connection-msg');
+            const permissionGuideDiv = document.getElementById('permission-guide');
+
+            if (window.location.protocol !== 'https:') {
+                secureConnectionMsg.classList.remove('hidden');
+            }
+            
+            if (!SpeechRecognition) {
+                unsupportedDiv.classList.remove('hidden');
+                document.querySelector('.w-full.max-w-2xl').style.display = 'none';
+                return;
+            }
+
+            const languageSelect = document.getElementById('language');
+            const recordBtn = document.getElementById('recordBtn');
+            const recordBtnText = document.getElementById('recordBtnText');
+            const transcriptionTextarea = document.getElementById('transcription');
+            const copyBtn = document.getElementById('copyBtn');
+            const statusDiv = document.getElementById('status');
+            
+            let recognition = new SpeechRecognition();
+            let isRecording = false;
+            let final_transcript = '';
+
+            const languages = [
+                { name: 'English (US)', code: 'en-US' }, { name: 'English (UK)', code: 'en-GB' },
+                { name: 'Español (España)', code: 'es-ES' }, { name: 'Español (México)', code: 'es-MX' },
+                { name: 'Français', code: 'fr-FR' }, { name: 'Deutsch', code: 'de-DE' },
+                { name: 'Italiano', code: 'it-IT' }, { name: 'Português (Brasil)', code: 'pt-BR' },
+                { name: 'Русский', code: 'ru-RU' }, { name: '日本語', code: 'ja-JP' },
+                { name: '中文 (普通话)', code: 'cmn-Hans-CN' }, { name: 'हिन्दी', code: 'hi-IN' },
+                { name: 'العربية', code: 'ar-SA' }
+            ];
+
+            function initialize() {
+                populateLanguages();
+                setupRecognition();
+                attachEventListeners();
+            }
+
+            function populateLanguages() {
+                languages.forEach(lang => {
+                    const option = new Option(lang.name, lang.code);
+                    languageSelect.add(option);
+                });
+            }
+
+            function setupRecognition() {
+                recognition.lang = languageSelect.value;
+                recognition.continuous = true;
+                recognition.interimResults = true;
+
+                recognition.onstart = () => {
+                    isRecording = true;
+                    statusDiv.textContent = 'Listening...';
+                    recordBtn.classList.add('bg-red-600', 'hover:bg-red-700', 'pulsing');
+                    recordBtn.classList.remove('bg-indigo-600', 'hover:bg-indigo-700');
+                    recordBtnText.textContent = 'Stop Recording';
+                    permissionGuideDiv.classList.add('hidden'); // Hide guide on successful start
+                };
+
+                recognition.onend = () => {
+                    isRecording = false;
+                    statusDiv.textContent = 'Click "Start Recording" to begin.';
+                    recordBtn.classList.remove('bg-red-600', 'hover:bg-red-700', 'pulsing');
+                    recordBtn.classList.add('bg-indigo-600', 'hover:bg-indigo-700');
+                    recordBtnText.textContent = 'Start Recording';
+                };
+
+                recognition.onerror = (event) => {
+                    console.error('Speech recognition error:', event.error);
+                    if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+                        permissionGuideDiv.classList.remove('hidden');
+                        statusDiv.textContent = 'Permission denied.';
+                    } else {
+                        statusDiv.textContent = `Error: ${event.error}`;
+                    }
+                };
+
+                recognition.onresult = (event) => {
+                    let interim_transcript = '';
+                    final_transcript = '';
+                    for (let i = 0; i < event.results.length; ++i) {
+                        if (event.results[i].isFinal) {
+                            final_transcript += event.results[i][0].transcript;
+                        } else {
+                            interim_transcript += event.results[i][0].transcript;
+                        }
+                    }
+                    transcriptionTextarea.value = final_transcript + interim_transcript;
+                };
+            }
+            
+            function attachEventListeners() {
+                recordBtn.addEventListener('click', toggleRecording);
+                copyBtn.addEventListener('click', copyText);
+                languageSelect.addEventListener('change', () => {
+                    recognition.lang = languageSelect.value;
+                    if (isRecording) {
+                        recognition.stop();
+                        setTimeout(() => recognition.start(), 250);
+                    }
+                });
+            }
+
+            function toggleRecording() {
+                if (isRecording) {
+                    recognition.stop();
+                } else {
+                    transcriptionTextarea.value = '';
+                    final_transcript = '';
+                    try {
+                        recognition.start();
+                    } catch(e) {
+                        console.error("Could not start recognition: ", e);
+                        statusDiv.textContent = 'Recording could not be started.';
+                    }
+                }
+            }
+
+            function copyText() {
+                const textToCopy = transcriptionTextarea.value;
+                if (!textToCopy) {
+                    statusDiv.textContent = 'Nothing to copy!';
+                    setTimeout(() => { if (statusDiv.textContent === 'Nothing to copy!') statusDiv.textContent = ''; }, 2000);
+                    return;
+                }
+
+                const tempTextArea = document.createElement("textarea");
+                tempTextArea.value = textToCopy;
+                document.body.appendChild(tempTextArea);
+                tempTextArea.select();
+                try {
+                    document.execCommand('copy');
+                    statusDiv.textContent = 'Text copied to clipboard!';
+                } catch (err) {
+                    statusDiv.textContent = 'Failed to copy text.';
+                }
+                document.body.removeChild(tempTextArea);
+                
+                setTimeout(() => {
+                    if (statusDiv.textContent === 'Text copied to clipboard!') {
+                        statusDiv.textContent = '';
+                    }
+                }, 2000);
+            }
+
+            initialize();
+        });
+    </script>
+</body>
+</html>
