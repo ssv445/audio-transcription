@@ -55,24 +55,22 @@
         .recording-header {
             cursor: pointer;
         }
+        .modal-overlay {
+            transition: opacity 0.3s ease-in-out;
+        }
+        .modal-content {
+            transition: transform 0.3s ease-in-out;
+        }
     </style>
 </head>
 <body class="bg-zinc-900 text-white flex items-center justify-center min-h-screen p-4">
 
     <div class="w-full max-w-2xl bg-zinc-800 rounded-2xl shadow-lg p-6 md:p-8 space-y-6 border border-zinc-700">
         
-        <!-- Header & Folder Management -->
-        <div class="flex justify-between items-start">
-            <div class="text-left">
-                <h1 class="text-2xl md:text-3xl font-bold text-zinc-100">Voice-to-Text & Recorder</h1>
-                <p class="text-zinc-400 mt-2 text-sm">Get a transcription and a local audio recording.</p>
-            </div>
-            <div class="flex items-center gap-2 flex-shrink-0">
-                <select id="folderSelect" class="bg-zinc-700 border border-zinc-600 rounded-lg py-1 px-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none transition"></select>
-                <button id="newFolderBtn" class="p-1.5 bg-zinc-700 hover:bg-zinc-600 rounded-lg" title="New Folder">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h5l2 3h9a2 2 0 012 2v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"></path></svg>
-                </button>
-            </div>
+        <!-- Header -->
+        <div class="text-center">
+            <h1 class="text-2xl md:text-3xl font-bold text-zinc-100">Voice-to-Text & Recorder</h1>
+            <p class="text-zinc-400 mt-2">Get a transcription and a local audio recording of your speech.</p>
         </div>
 
         <!-- Error/Info Messages -->
@@ -112,17 +110,25 @@
                 </button>
             </div>
         </div>
-        <p id="folderIndicator" class="text-center text-xs text-zinc-500 -mt-4"></p>
-
-        <!-- Text Area -->
-        <div>
-            <label for="transcription" class="sr-only">Transcription</label>
+        
+        <!-- Status & Text Area -->
+        <div class="relative">
+            <p id="status" class="text-zinc-400 text-sm h-5 text-center mb-2">Ready to go!</p>
             <textarea id="transcription" rows="6" class="w-full bg-zinc-900/50 border border-zinc-700 rounded-lg p-4 focus:ring-2 focus:ring-indigo-500 focus:outline-none resize-none" placeholder="Your transcribed text will appear here..."></textarea>
         </div>
-        
-        <!-- Status -->
-        <p id="status" class="text-zinc-400 text-sm h-5 text-center">Ready to go!</p>
 
+        <!-- Folder Management -->
+        <div class="flex flex-col sm:flex-row items-center gap-4 pt-2 border-t border-zinc-700/50">
+             <div class="flex items-center gap-2 flex-shrink-0">
+                <label for="folderSelect" class="text-sm font-medium text-zinc-400">Folder:</label>
+                <select id="folderSelect" class="bg-zinc-700 border border-zinc-600 rounded-lg py-1 px-2 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none transition"></select>
+                <button id="newFolderBtn" class="p-1.5 bg-zinc-700 hover:bg-zinc-600 rounded-lg" title="New Folder">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 13h6m-3-3v6m-9 1V7a2 2 0 012-2h5l2 3h9a2 2 0 012 2v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"></path></svg>
+                </button>
+            </div>
+            <p id="folderIndicator" class="text-xs text-zinc-500 text-center sm:text-left flex-grow"></p>
+        </div>
+        
         <!-- Recordings Section -->
         <div id="recordings-section" class="pt-4 border-t border-zinc-700">
              <div class="flex justify-between items-center mb-2">
@@ -135,6 +141,22 @@
              </div>
         </div>
     </div>
+
+    <!-- New Folder Modal -->
+    <div id="folderModal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 modal-overlay">
+        <div class="bg-zinc-800 rounded-lg p-6 w-full max-w-sm modal-content transform scale-95">
+            <h3 class="text-lg font-medium mb-4">Create New Folder</h3>
+            <div>
+                <label for="folderNameInput" class="text-sm text-zinc-400">Folder Name</label>
+                <input type="text" id="folderNameInput" class="w-full bg-zinc-700 border border-zinc-600 rounded-lg py-2 px-3 mt-1 focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+            </div>
+            <div class="flex justify-end gap-4 mt-6">
+                <button id="cancelFolderBtn" class="px-4 py-2 rounded-lg bg-zinc-700 hover:bg-zinc-600 transition">Cancel</button>
+                <button id="saveFolderBtn" class="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 transition">Save</button>
+            </div>
+        </div>
+    </div>
+
 
     <script>
         document.addEventListener('DOMContentLoaded', () => {
@@ -210,6 +232,10 @@
             const recordingsList = document.getElementById('recordingsList');
             const noRecordingsMsg = document.getElementById('noRecordings');
             const totalStorageEl = document.getElementById('totalStorage');
+            const folderModal = document.getElementById('folderModal');
+            const folderNameInput = document.getElementById('folderNameInput');
+            const saveFolderBtn = document.getElementById('saveFolderBtn');
+            const cancelFolderBtn = document.getElementById('cancelFolderBtn');
             
             let recognition;
             let mediaRecorder;
@@ -616,8 +642,25 @@
                     setupRecognition();
                 });
 
-                newFolderBtn.addEventListener('click', async () => {
-                    const folderName = prompt("Enter a name for the new folder:");
+                newFolderBtn.addEventListener('click', () => {
+                    folderModal.classList.remove('hidden');
+                    folderModal.querySelector('.modal-content').classList.add('scale-100');
+                    folderNameInput.focus();
+                });
+
+                cancelFolderBtn.addEventListener('click', () => {
+                    folderModal.classList.add('hidden');
+                    folderModal.querySelector('.modal-content').classList.remove('scale-100');
+                });
+                
+                folderModal.addEventListener('click', (e) => {
+                    if (e.target === folderModal) {
+                        cancelFolderBtn.click();
+                    }
+                });
+
+                saveFolderBtn.addEventListener('click', async () => {
+                    const folderName = folderNameInput.value.trim();
                     if (folderName) {
                         const newFolder = { id: `folder-${Date.now()}`, name: folderName };
                         await dbFolders.put(newFolder);
@@ -625,6 +668,8 @@
                         folderSelect.value = newFolder.id;
                         await renderRecordingsForCurrentFolder();
                         updateFolderIndicator();
+                        folderNameInput.value = '';
+                        cancelFolderBtn.click();
                     }
                 });
 
